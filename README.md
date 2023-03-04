@@ -10,7 +10,7 @@ Install the python dependencies in your virtual environment from requirements.tx
 pip install -r requirements.txt
 ```
 
-## Usage
+## Usage - CLI
 
 You can try the chatbot with the command line interface provided:
 
@@ -28,6 +28,22 @@ options:
 The knowledge base parameter should be the name of one of the subdirectory of the `data` directory.
 
 Have ready your OpenAI API key, the CLI will ask for it.
+
+## Usage - Streamlit
+
+There is also a streamlit interface so you can interact with the agent from a web window. First, create a subdirectory and a file in it called `.streamlit/secrets.toml`. The contents of the file should be:
+
+```text
+api_secret = "[your OpenAI API key]"
+```
+
+Now you can launch the streamlit app with:
+
+```bash
+streamlit run chatlit.py
+```
+
+If it starts, open http://localhost:8501 to interact with the agent.
 
 ## Adding a new knowledge base
 
