@@ -27,6 +27,8 @@ options:
 
 The knowledge base parameter should be the name of one of the subdirectory of the `data` directory.
 
+Have ready your OpenAI API key, the CLI will ask for it.
+
 ## Adding a new knowledge base
 
 1. Create a subdirectory of the `data` directory with the name of your knowledge base. We will refer to this directory as "working directory" in the following points.
