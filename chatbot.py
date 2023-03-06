@@ -44,15 +44,17 @@ class ChatBot:
 
     PROMPT_TEMPLATES = {
         'en':
-            "{identity} "
-            "Answer the question based on the context below, and if the question can't be "
-            "answered based on the context, say \"I don't know.\"\n\n"
-            "Context: {context}\n\n",
+            "{identity}\n\n"
+            "Answer the question as truthfully as possible using the provided text, and if the "
+            "answer is not contained within the text below, say \"I don't know\". You are not "
+            "allowed to answer questions not relevant to the context.\n\n"
+            "Context: \n{context}\n\n",
         'it':
-            "{identity} "
-            "Rispondi alla domanda con in base al contesto sottostante e, se non è possibile "
-            "rispondere alla domanda in base al contesto, dì \"Non lo so.\"\n\n"
-            "Contesto: {context}\n\n"
+            "{identity}\n\n"
+            "Rispondi alla domanda nel modo più veritiero possibile utilizzando il testo fornito e, "
+            "se la risposta non è contenuta nel testo sottostante, dì \"Non lo so\". Non è "
+            "consentito rispondere a domande non pertinenti al contesto.\n\n"
+            "Contesto: \n{context}\n\n"
     }
 
     @staticmethod
