@@ -1,8 +1,8 @@
-from typing import Union, List, Mapping, Optional
+from typing import Union, List, Mapping, Optional, Sequence
 import enum
 import logging
 from pathlib import Path
-import getpass
+import os
 
 import openai
 import tiktoken
@@ -10,6 +10,31 @@ import pandas as pd
 import numpy as np
 
 from openai.embeddings_utils import distances_from_embeddings
+
+def read_file(filename: Union[str, Path]) -> str:
+    with open(filename) as f:
+        return f.read().strip()
+
+
+class KnowledgeBase:
+
+    @staticmethod
+    def available_knowledge_bases() -> Sequence[str]:
+        return next(os.walk('data'))[1]
+
+    @staticmethod
+    def read_file(filename: Union[str, Path]) -> str:
+        with open(filename) as f:
+            return f.read().strip()
+
+    def __init__(self, kb_name: str) -> None:
+        self.data_folder = Path('data') / kb_name
+        self.kb_path = self.data_folder / Path('qa.csv')
+        self.embeddings_path = self.data_folder / Path('embeddings.csv')
+        self.identity = KnowledgeBase.read_file(self.data_folder / Path('identity.txt'))
+        self.language = KnowledgeBase.read_file(self.data_folder / Path('lang.txt'))
+        self.help_text = KnowledgeBase.read_file(self.data_folder / Path('help.txt'))
+
 
 class ChatBot:
 
@@ -30,8 +55,12 @@ class ChatBot:
             "Contesto: {context}\n\n"
     }
 
+    @staticmethod
+    def knowledge_bases() -> Sequence[str]:
+        return next(os.walk('data'))[1]
+
     def __init__(self,
-        kb_name: str,
+        knowledge_base: KnowledgeBase,
         openai_api_key: str,
         tokenizer_encoding: str = 'cl100k_base',
         embeddings_engine: str = 'text-embedding-ada-002',
@@ -42,15 +71,8 @@ class ChatBot:
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         openai.api_key = openai_api_key
-        self.kb_name = kb_name
-        self.data_folder = Path('data') / kb_name
-        self.kb_path = self.data_folder / Path('qa.csv')
-        self.identity_path = self.data_folder / Path('identity.txt')
-        self.embeddings_path = self.data_folder / Path('embeddings.csv')
-        self.kb_lang_path = self.data_folder / Path('lang.txt')
-        with open(self.kb_lang_path) as f:
-            self.kb_language = f.read().strip()
-        if self.kb_language not in self.PROMPT_TEMPLATES:
+        self.kb = knowledge_base
+        if self.kb.language not in self.PROMPT_TEMPLATES:
             raise ValueError(
                 f'Unsupported knowledge base langue "{self.kb_language}". '
                 f'Supported languages: {", ".join(self.PROMPT_TEMPLATES.keys())}'
@@ -62,11 +84,9 @@ class ChatBot:
         self.max_kb_article_len = max_kb_article_len
         self.max_response_len = max_response_len
         self.history: List[Mapping[str, str]] = []
-        with open(self.identity_path) as f:
-            self.identity = f.read().strip()
-        if self.embeddings_path.is_file():
+        if self.kb.embeddings_path.is_file():
             self.logger.info('Embeddings file found, trying to load it ...')
-            df = pd.read_csv(self.embeddings_path)
+            df = pd.read_csv(self.kb.embeddings_path)
             df['embeddings'] = df['embeddings'].apply(eval).apply(np.array)
             self.embeddings = df
             self.logger.info('Embeddings were successfully loaded.')
@@ -77,7 +97,7 @@ class ChatBot:
             )
             # lines = self._shortened(self.kb_path, max_tokens=self.max_kb_article_len)
             self.embeddings = self._create_embeddings(
-                output_path=self.embeddings_path
+                output_path=self.kb.embeddings_path
             )
             self.logger.info('Embeddings were successfully created.')
 
@@ -141,7 +161,7 @@ class ChatBot:
         # lines: Sequence[str]
     ) -> pd.DataFrame:
         ''' Create embeddings for kb articles using OpenAi services. '''
-        df = pd.read_csv(self.kb_path)
+        df = pd.read_csv(self.kb.kb_path)
         df['embeddings'] = df['question'].apply(
             lambda x: openai.Embedding.create(
                 input=x,
@@ -199,23 +219,26 @@ class ChatBot:
         debug=False
     ) -> str:
         """Answer a question based on the most similar context from the kb."""
+        self.history.append({"role": "user", "content": question})
+
         context = self.create_context(question)
         self.logger.debug("Context:\n%s", context)
-        if debug:
-            print("Context:\n{}".format(context))
-            print("\n--------\n")
-        prompt_template = self.PROMPT_TEMPLATES[self.kb_language]
+        prompt_template = self.PROMPT_TEMPLATES[self.kb.language]
         prompt = prompt_template.format(
             context=context,
             question=question,
-            identity=self.identity
+            identity=self.kb.identity
         )
 
         messages = [
             {"role": "system", "content": prompt}
         ]
         messages += self.history
-        messages += [{"role": "user", "content": question}]
+
+        if debug:
+            for msg in messages:
+                print(msg['role'].upper() + ':')
+                print(msg['content'] + '\n')
 
         try:
             # Create a completions using the question and context
@@ -230,7 +253,6 @@ class ChatBot:
                 model=self.model_name,
             )
             response = api_resp["choices"][0]["message"]["content"].strip()
-            self.history.append({"role": "user", "content": question})
             self.history.append({"role": "assistant", "content": response})
             return response
         except Exception as e:
@@ -239,7 +261,7 @@ class ChatBot:
 
 
 if __name__ == '__main__':
-    import argparse
+    import argparse, getpass
     parser = argparse.ArgumentParser(description="Virtual assistant chatbot")
     parser.add_argument('-kb', '--knowledge_base', type=str, required=True,
                         help="knowledge base (./data subfolder)")
@@ -247,8 +269,9 @@ if __name__ == '__main__':
 
     openai_api_key = getpass.getpass('Enter OpenAI API key: ')
 
+    kb = KnowledgeBase(args.knowledge_base)
     agent = ChatBot(
-        kb_name=args.knowledge_base,
+        knowledge_base=kb,
         openai_api_key=openai_api_key,
         max_prompt_len=400,
         max_response_len=400
