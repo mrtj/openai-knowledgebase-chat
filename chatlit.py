@@ -9,15 +9,25 @@ TEXTS = {
         'Message:': 'Messaggio:',
         '{chatbot_name} Virtual Assistant': 'Assistente Virtuale {chatbot_name}',
         'Please enter your OpenAI API key:': 'Inserisci la tua OpenAI API key:',
-        '{chatbot_name} is responding ...': '{chatbot_name} sta scrivendo ...'
+        '{chatbot_name} is responding ...': '{chatbot_name} sta scrivendo ...',
+        'You need an OpenAI API key to use this application. '
+            'You can get one at {openai_api_key_link}.':
+        'È necessaria una OpenAI API key per utilizzare questa applicazione. '
+            'Puoi ottenerne uno su {openai_api_key_link}.',
     },
     'en': {
         'Message:': 'Message:',
         '{chatbot_name} Virtual Assistant': '{chatbot_name} Virtual Assistant',
         'Please enter your OpenAI API key:': 'Please enter your OpenAI API key:',
         '{chatbot_name} is responding ...': '{chatbot_name} is responding ...',
+        'You need an OpenAI API key to use this application. '
+            'You can get one at {openai_api_key_link}.':
+        'You need an OpenAI API key to use this application. '
+            'You can get one at {openai_api_key_link}.'
     }
 }
+
+openai_api_key_link = 'https://platform.openai.com/account/api-keys'
 
 def main():
 
@@ -32,6 +42,9 @@ def main():
 
     if 'agent' not in st.session_state:
         if 'openai_api_key' not in st.session_state or len(st.session_state.openai_api_key) == 0:
+            st.write(texts[
+                'You need an OpenAI API key to use this application. '
+                'You can get one at {openai_api_key_link}.'].format(openai_api_key_link=openai_api_key_link))
             openai_api_key = st.text_input(
                 texts['Please enter your OpenAI API key:'], type='password', key='openai_api_key'
             )
@@ -77,4 +90,7 @@ def main():
     st.text_input(texts['Message:'], key='question')
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(str(e))
