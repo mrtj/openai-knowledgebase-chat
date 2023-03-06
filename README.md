@@ -31,13 +31,9 @@ Have ready your OpenAI API key, the CLI will ask for it.
 
 ## Usage - Streamlit
 
-There is also a streamlit interface so you can interact with the agent from a web window. First, create a subdirectory and a file in it called `.streamlit/secrets.toml`. The contents of the file should be:
+There is also a streamlit interface so you can interact with the agent from a web window. Have ready your OpenAI API key, the web application will ask for it.
 
-```text
-api_secret = "[your OpenAI API key]"
-```
-
-Now you can launch the streamlit app with:
+You can launch the streamlit app with:
 
 ```bash
 streamlit run chatlit.py
