@@ -181,17 +181,19 @@ class ChatBot:
         Create a context for a question by finding the most similar context from the embeddings
         """
 
+        # SEPARATOR = '\n\n###\n\n'
+        SEPARATOR = '\n* '
+
         # Get the embeddings for the question
         q_embeddings = openai.Embedding.create(
             input=question,
             engine=self.embeddings_engine_name
         )['data'][0]['embedding']
 
-        df = self.embeddings
         # Get the distances from the embeddings
-        df['distances'] = distances_from_embeddings(
+        self.embeddings['distances'] = distances_from_embeddings(
             q_embeddings,
-            df['embeddings'].values,
+            self.embeddings['embeddings'].values,
             distance_metric='cosine'
         )
 
@@ -199,7 +201,7 @@ class ChatBot:
         cur_len = 0
 
         # Sort by distance and add the text to the context until the context is too long
-        for _, row in df.sort_values('distances', ascending=True).iterrows():
+        for _, row in self.embeddings.sort_values('distances', ascending=True).iterrows():
 
             # Add the length of the text to the current length
             cur_len += row['n_tokens'] + 4
@@ -212,7 +214,7 @@ class ChatBot:
             returns.append(row["answer"])
 
         # Return the context
-        return "\n\n###\n\n".join(returns)
+        return SEPARATOR.join(returns)
 
     def answer_question(self,
         question: str,
@@ -221,7 +223,6 @@ class ChatBot:
         debug=False
     ) -> str:
         """Answer a question based on the most similar context from the kb."""
-        self.history.append({"role": "user", "content": question})
 
         context = self.create_context(question)
         self.logger.debug("Context:\n%s", context)
@@ -232,12 +233,15 @@ class ChatBot:
             identity=self.kb.identity
         )
 
+        self.history.append({"role": "user", "content": question})
+
         messages = [
             {"role": "system", "content": prompt}
         ]
         messages += self.history
 
         if debug:
+            print('-' * 20)
             for msg in messages:
                 print(msg['role'].upper() + ':')
                 print(msg['content'] + '\n')
@@ -254,6 +258,9 @@ class ChatBot:
                 presence_penalty=0,
                 model=self.model_name,
             )
+            if debug:
+                print('TOKEN_USAGE: prompt={prompt_tokens}, completion={completion_tokens}, '
+                      'total={total_tokens}\n'.format(**api_resp['usage']))
             response = api_resp["choices"][0]["message"]["content"].strip()
             self.history.append({"role": "assistant", "content": response})
             return response
