@@ -1,13 +1,15 @@
-from typing import Union, List, Mapping, Optional, Sequence
+from typing import Union, List, Mapping, Optional, Sequence, Iterable, Iterator, NamedTuple
 import enum
 import logging
 from pathlib import Path
 import os
+import csv
 
 import openai
 import tiktoken
 import pandas as pd
 import numpy as np
+import numpy.typing
 
 from openai.embeddings_utils import distances_from_embeddings
 
@@ -36,6 +38,112 @@ class KnowledgeBase:
         self.help_text = KnowledgeBase.read_file(self.data_folder / Path('help.txt'))
 
 
+class Preprocessor:
+    ''' Preprocesses a list of text to be used by the chatbot as knowledge base.
+
+    Args:
+        tokenizer_encoding (str): The encoding name of the tokenizer.
+            `tiktoken.list_encoding_names()` returns the available encodings.
+        embeddings_engine (str): The name of the embedding engine. Just use "text-embedding-ada-002"
+            in most use cases. For more info:
+            https://platform.openai.com/docs/guides/embeddings/what-are-embeddings
+        max_kb_article_len (int): The maximum length of the knowledge base article chunks, expressed
+            in number of tokens.
+    '''
+
+    class Article(NamedTuple):
+        ''' A preprocessed knowledge base article. '''
+
+        text: str
+        ''' The text of the article. '''
+
+        embeddings: numpy.typing.NDArray
+        ''' The calculated embeddings vector. '''
+
+        n_tokens: int
+        ''' The number of tokens in the article. '''
+
+    def __init__(self,
+        tokenizer_encoding: str = 'cl100k_base',
+        embeddings_engine: str = 'text-embedding-ada-002',
+        max_kb_article_len: int = 500,
+    ):
+        self.tokenizer = tiktoken.get_encoding(tokenizer_encoding)
+        self.embeddings_engine_name = embeddings_engine
+        self.max_kb_article_len = max_kb_article_len
+
+    def _split_into_many(self, text: str) -> Iterator[str]:
+        ''' Function to split the text into chunks of a maximum number of tokens '''
+
+        # Split the text into sentences
+        sentences = text.split('. ')
+
+        # Get the number of tokens for each sentence
+        n_tokens = [len(self.tokenizer.encode(" " + sentence)) for sentence in sentences]
+
+        tokens_so_far = 0
+        chunk = []
+
+        # Loop through the sentences and tokens joined together in a tuple
+        for sentence, token in zip(sentences, n_tokens):
+
+            # If the number of tokens so far plus the number of tokens in the current sentence is
+            # greater than the max number of tokens, then add the chunk to the list of chunks and
+            # reset the chunk and tokens so far
+            if tokens_so_far + token > self.max_kb_article_len:
+                res = ". ".join(chunk) + "."
+                yield res
+                chunk = []
+                tokens_so_far = 0
+
+            # If the number of tokens in the current sentence is greater than the max number of
+            # tokens, go to the next sentence
+            if token > self.max_kb_article_len:
+                continue
+
+            # Otherwise, add the sentence to the chunk and add the number of tokens to the total
+            chunk.append(sentence)
+            tokens_so_far += token + 1
+
+    def _shortened(self, kb_iterable: Iterable[str]) -> Iterator[str]:
+        ''' Ensures each kb article is shorter than max_tokens number of tokens. '''
+        for line in kb_iterable:
+            line = line.strip()
+            # If the text is None, go to the next row
+            if line is None:
+                continue
+
+            # If the number of tokens is greater than the max number of tokens, split the text
+            # into chunks
+            if len(self.tokenizer.encode(line)) > self.max_kb_article_len:
+                yield from self._split_into_many(line)
+
+            # Otherwise, add the text to the list of shortened texts
+            else:
+                yield line
+
+    def create_embeddings(self, kb_iterable: Iterable[str]) -> Iterator[Article]:
+        ''' Preprocess for knowledge base articles using OpenAi services.
+
+        Make sure that you set openai.api_key before calling this method.
+
+        Args:
+            kb_iterable Iterable[str]: An iterable that yields articles of the source knowledge base.
+
+        Returns:
+            Iterator[Article]: An iterator over the preprocessed knowledge base articles
+        '''
+        for text in self._shortened(kb_iterable):
+            print('.', end='', flush=True)
+            yield Preprocessor.Article(
+                text=text,
+                embeddings=openai.Embedding.create(
+                    input=text,
+                    engine=self.embeddings_engine_name)['data'][0]['embedding'],
+                n_tokens=len(self.tokenizer.encode(" " + text))
+            )
+        print()
+
 class ChatBot:
 
     class Language(enum.Enum):
@@ -45,15 +153,15 @@ class ChatBot:
     PROMPT_TEMPLATES = {
         'en':
             "{identity}\n\n"
-            "Answer the question as truthfully as possible using the provided text, and if the "
-            "answer is not contained within the text below, say \"I don't know\". You are not "
+            "Answer the question as truthfully as possible using the provided context, and if the "
+            "answer is not contained within the context below, say \"I don't know\". You are not "
             "allowed to answer questions not relevant to the context.\n\n"
             "Context: \n{context}\n\n",
         'it':
             "{identity}\n\n"
-            "Rispondi alla domanda nel modo più veritiero possibile utilizzando il testo fornito e, "
-            "se la risposta non è contenuta nel testo sottostante, dì \"Non lo so\". Non è "
-            "consentito rispondere a domande non pertinenti al contesto.\n\n"
+            "Rispondi alla domanda nel modo più veritiero possibile utilizzando il contesto fornito e, "
+            "se la risposta non è contenuta nel contesto sottostante, dì \"Non lo so\"."
+            "Usa esclusivamente informazioni pertinenti al contesto.\n\n"
             "Contesto: \n{context}\n\n"
     }
 
@@ -61,18 +169,20 @@ class ChatBot:
     def knowledge_bases() -> Sequence[str]:
         return next(os.walk('data'))[1]
 
+    @staticmethod
+    def set_openai_api_key(openai_api_key: str) -> None:
+        openai.api_key = openai_api_key
+
     def __init__(self,
         knowledge_base: KnowledgeBase,
-        openai_api_key: str,
         tokenizer_encoding: str = 'cl100k_base',
         embeddings_engine: str = 'text-embedding-ada-002',
         model_name: str = 'gpt-3.5-turbo',
         max_prompt_len: int = 1800,
-        max_kb_article_len: int = 50,
+        max_kb_article_len: int = 500,
         max_response_len: int = 200,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
-        openai.api_key = openai_api_key
         self.kb = knowledge_base
         if self.kb.language not in self.PROMPT_TEMPLATES:
             raise ValueError(
@@ -83,103 +193,35 @@ class ChatBot:
         self.embeddings_engine_name = embeddings_engine
         self.model_name = model_name
         self.max_prompt_len = max_prompt_len
-        self.max_kb_article_len = max_kb_article_len
         self.max_response_len = max_response_len
         self.history: List[Mapping[str, str]] = []
-        if self.kb.embeddings_path.is_file():
-            self.logger.info('Embeddings file found, trying to load it ...')
-            df = pd.read_csv(self.kb.embeddings_path)
-            df['embeddings'] = df['embeddings'].apply(eval).apply(np.array)
-            self.embeddings = df
-            self.logger.info('Embeddings were successfully loaded.')
-        else:
+        if not self.kb.embeddings_path.is_file():
             self.logger.info(
                 'Embeddings file not found, creating embeddings with OpenAI services. '
                 'This might take several minutes based on the knowledge base size ...'
             )
-            # lines = self._shortened(self.kb_path, max_tokens=self.max_kb_article_len)
-            self.embeddings = self._create_embeddings(
-                output_path=self.kb.embeddings_path
+            preprocessor = Preprocessor(
+                tokenizer_encoding=tokenizer_encoding,
+                embeddings_engine=self.embeddings_engine_name,
+                max_kb_article_len=max_kb_article_len,
             )
+            kb_df = pd.read_csv(self.kb.kb_path)
+            kb_lines = (' '.join(row) for row in kb_df.itertuples(index=False))
+            with open(self.kb.embeddings_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(Preprocessor.Article._fields)
+                writer.writerows(preprocessor.create_embeddings(kb_lines))
             self.logger.info('Embeddings were successfully created.')
 
-    def _split_into_many(self, text: str, max_tokens: int = 500) -> List[str]:
-        ''' Function to split the text into chunks of a maximum number of tokens '''
-
-        # Split the text into sentences
-        sentences = text.split('. ')
-
-        # Get the number of tokens for each sentence
-        n_tokens = [len(self.tokenizer.encode(" " + sentence)) for sentence in sentences]
-
-        chunks = []
-        tokens_so_far = 0
-        chunk = []
-
-        # Loop through the sentences and tokens joined together in a tuple
-        for sentence, token in zip(sentences, n_tokens):
-
-            # If the number of tokens so far plus the number of tokens in the current sentence is
-            # greater than the max number of tokens, then add the chunk to the list of chunks and
-            # reset the chunk and tokens so far
-            if tokens_so_far + token > max_tokens:
-                chunks.append(". ".join(chunk) + ".")
-                chunk = []
-                tokens_so_far = 0
-
-            # If the number of tokens in the current sentence is greater than the max number of
-            # tokens, go to the next sentence
-            if token > max_tokens:
-                continue
-
-            # Otherwise, add the sentence to the chunk and add the number of tokens to the total
-            chunk.append(sentence)
-            tokens_so_far += token + 1
-
-        return chunks
-
-    def _shortened(self, kb_path, max_tokens: int = 500) -> List[str]:
-        ''' Ensures each kb article is shorter than max_tokens number of tokens. '''
-        shortened = []
-        with open(kb_path) as f:
-            for line in f:
-                line = line.strip()
-                # If the text is None, go to the next row
-                if line is None:
-                    continue
-
-                # If the number of tokens is greater than the max number of tokens, split the text
-                # into chunks
-                if len(self.tokenizer.encode(line)) > max_tokens:
-                    shortened += self._split_into_many(line, max_tokens=max_tokens)
-
-                # Otherwise, add the text to the list of shortened texts
-                else:
-                    shortened.append(line)
-        return shortened
-
-    def _create_embeddings(self,
-        output_path: Union[str, Path],
-        # lines: Sequence[str]
-    ) -> pd.DataFrame:
-        ''' Create embeddings for kb articles using OpenAi services. '''
-        df = pd.read_csv(self.kb.kb_path)
-        df['embeddings'] = df['question'].apply(
-            lambda x: openai.Embedding.create(
-                input=x,
-                engine=self.embeddings_engine_name
-            )['data'][0]['embedding']
-        )
-        df['n_tokens'] = df['answer'].apply(
-            lambda x: len(self.tokenizer.encode(" " + x))
-        )
-        df.to_csv(output_path, index=False)
-        return df
+        df = pd.read_csv(self.kb.embeddings_path)
+        df['embeddings'] = df['embeddings'].apply(eval).apply(np.array)
+        self.embeddings = df
+        self.logger.info('Embeddings were successfully loaded.')
 
     def create_context(self, question: str) -> str:
-        """
+        '''
         Create a context for a question by finding the most similar context from the embeddings
-        """
+        '''
 
         # SEPARATOR = '\n\n###\n\n'
         SEPARATOR = '\n* '
@@ -211,7 +253,7 @@ class ChatBot:
                 break
 
             # Else add it to the text that is being returned
-            returns.append(row["answer"])
+            returns.append(row['text'])
 
         # Return the context
         return SEPARATOR.join(returns)
@@ -239,6 +281,11 @@ class ChatBot:
             {"role": "system", "content": prompt}
         ]
         messages += self.history
+        messages += [{
+            "role": "system",
+            "content": "Ricordati di rispondere alle domande a base del contesto fornito "
+                "oppure dì \"Non lo so\"!"
+        }]
 
         if debug:
             print('-' * 20)
@@ -271,6 +318,7 @@ class ChatBot:
 
 if __name__ == '__main__':
     import argparse, getpass
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Virtual assistant chatbot")
     parser.add_argument('-kb', '--knowledge_base', type=str, required=True,
                         help="knowledge base (./data subfolder)")
@@ -279,20 +327,21 @@ if __name__ == '__main__':
     openai_api_key = getpass.getpass('Enter OpenAI API key: ')
 
     kb = KnowledgeBase(args.knowledge_base)
+    ChatBot.set_openai_api_key(openai_api_key)
+
     agent = ChatBot(
         knowledge_base=kb,
-        openai_api_key=openai_api_key,
         max_prompt_len=400,
         max_response_len=400
     )
 
     print(
-        f'\nWelcome to {agent.kb_name} virtual assistant. Type "exit" to exit. '
-        f'Start by typing a question in "{agent.kb_language}" language.'
+        f'\nWelcome to {args.knowledge_base} virtual assistant. Type "exit" to exit. '
+        f'Start by typing a question in "{agent.kb.language}" language.'
     )
     while True:
         question = input('\nUser: ')
         if question.lower() == 'exit':
             break
-        answer = agent.answer_question(question)
+        answer = agent.answer_question(question, debug=True)
         print('\nAssistant:', answer)
