@@ -144,25 +144,37 @@ class Preprocessor:
             )
         print()
 
+
 class ChatBot:
 
     class Language(enum.Enum):
-        EN = 'en',
-        IT = 'it',
+        en = 1,
+        it = 2,
 
-    PROMPT_TEMPLATES = {
-        'en':
-            "{identity}\n\n"
-            "Answer the question as truthfully as possible using the provided context, and if the "
-            "answer is not contained within the context below, say \"I don't know\". You are not "
-            "allowed to answer questions not relevant to the context.\n\n"
-            "Context: \n{context}\n\n",
-        'it':
-            "{identity}\n\n"
-            "Rispondi alla domanda nel modo più veritiero possibile utilizzando il contesto fornito e, "
-            "se la risposta non è contenuta nel contesto sottostante, dì \"Non lo so\"."
-            "Usa esclusivamente informazioni pertinenti al contesto.\n\n"
-            "Contesto: \n{context}\n\n"
+    class Template(enum.Enum):
+        prompt = 1,
+        epilog = 2
+
+    TEMPLATES = {
+        Language.en: {
+            Template.prompt: "{identity}\n\n"
+                "Answer the question as truthfully as possible using the provided context, "
+                "and if the answer is not contained within the context below, "
+                "say \"I don't know\". You may use information only relevant to the context.\n\n"
+                "Context: \n{context}\n\n",
+            Template.epilog: "Remember to answer questions based on the context provided or say "
+                "\"I don't know\"!"
+
+        },
+        Language.it: {
+            Template.prompt: "{identity}\n\n"
+                "Rispondi alla domanda nel modo più veritiero possibile utilizzando il contesto "
+                "fornito e, se la risposta non è contenuta nel contesto sottostante, dì "
+                "\"Non lo so\". Usa esclusivamente informazioni pertinenti al contesto.\n\n"
+                "Contesto: {context}\n\n",
+            Template.epilog: "Prommemoria: rispondi alle domande a base del contesto fornito "
+                "oppure dì \"Non lo so\"!"
+        }
     }
 
     @staticmethod
@@ -178,20 +190,25 @@ class ChatBot:
         tokenizer_encoding: str = 'cl100k_base',
         embeddings_engine: str = 'text-embedding-ada-002',
         model_name: str = 'gpt-3.5-turbo',
+        max_message_len: int = 4096,
         max_prompt_len: int = 1800,
         max_kb_article_len: int = 500,
-        max_response_len: int = 200,
+        max_response_len: int = 400,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.kb = knowledge_base
-        if self.kb.language not in self.PROMPT_TEMPLATES:
+        languages = [lang.name for lang in self.TEMPLATES.keys()]
+        if self.kb.language not in languages:
             raise ValueError(
-                f'Unsupported knowledge base langue "{self.kb_language}". '
-                f'Supported languages: {", ".join(self.PROMPT_TEMPLATES.keys())}'
+                f'Unsupported knowledge base langue "' + self.kb_language + '". '
+                'Supported languages: ' + ", ".join(languages)
             )
+        self.language = ChatBot.Language[self.kb.language]
+        self.instructions = self.TEMPLATES[self.language]
         self.tokenizer = tiktoken.get_encoding(tokenizer_encoding)
         self.embeddings_engine_name = embeddings_engine
         self.model_name = model_name
+        self.max_message_len = max_message_len
         self.max_prompt_len = max_prompt_len
         self.max_response_len = max_response_len
         self.history: List[Mapping[str, str]] = []
@@ -256,7 +273,28 @@ class ChatBot:
             returns.append(row['text'])
 
         # Return the context
-        return SEPARATOR.join(returns)
+        return SEPARATOR + SEPARATOR.join(returns)
+
+    def _truncate_history(self,
+        history_prefix: Optional[str]=None,
+        history_suffix: Optional[str]=None
+    ):
+        non_history_len = 0
+        non_history_len += len(self.tokenizer.encode(' ' + history_prefix)) if history_prefix else 0
+        non_history_len += len(self.tokenizer.encode(' ' + history_suffix)) if history_suffix else 0
+        max_history_len = self.max_message_len - non_history_len - self.max_response_len
+
+        history_len_so_far = 0
+        truncated = False
+        for idx, entry in reversed(list(enumerate(self.history))):
+            history_len_so_far += len(self.tokenizer.encode(entry['content']))
+            if history_len_so_far > max_history_len:
+                truncated = True
+                break
+        if truncated:
+            idx += 1
+            self.logger.info('Truncating history of first %s elements.', idx)
+            self.history = self.history[idx:]
 
     def answer_question(self,
         question: str,
@@ -268,24 +306,25 @@ class ChatBot:
 
         context = self.create_context(question)
         self.logger.debug("Context:\n%s", context)
-        prompt_template = self.PROMPT_TEMPLATES[self.kb.language]
-        prompt = prompt_template.format(
+
+        prompt = self.instructions[ChatBot.Template.prompt].format(
             context=context,
             question=question,
             identity=self.kb.identity
         )
+        epilog = self.instructions[ChatBot.Template.epilog]
 
         self.history.append({"role": "user", "content": question})
+        self._truncate_history(
+            history_prefix=prompt,
+            # history_suffix=epilog
+        )
 
-        messages = [
-            {"role": "system", "content": prompt}
-        ]
-        messages += self.history
-        messages += [{
-            "role": "system",
-            "content": "Ricordati di rispondere alle domande a base del contesto fornito "
-                "oppure dì \"Non lo so\"!"
-        }]
+        messages = (
+            [{"role": "system", "content": prompt}]
+            + self.history
+            # + [{"role": "system", "content": epilog}]
+        )
 
         if debug:
             print('-' * 20)

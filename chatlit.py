@@ -51,7 +51,8 @@ def main():
             return
         else:
             openai_api_key = st.session_state.openai_api_key
-            st.session_state.agent = ChatBot(knowledge_base=kb, openai_api_key=openai_api_key)
+            ChatBot.set_openai_api_key(openai_api_key)
+            st.session_state.agent = ChatBot(knowledge_base=kb)
 
     agent: ChatBot = st.session_state.agent
 
