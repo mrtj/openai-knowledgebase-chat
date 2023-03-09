@@ -13,6 +13,8 @@ import numpy.typing
 
 from openai.embeddings_utils import distances_from_embeddings
 
+from chat_tools import Language
+
 def read_file(filename: Union[str, Path]) -> str:
     with open(filename) as f:
         return f.read().strip()
@@ -147,16 +149,12 @@ class Preprocessor:
 
 class ChatBot:
 
-    class Language(enum.Enum):
-        en = 1,
-        it = 2,
-
     class Template(enum.Enum):
         prompt = 1,
         epilog = 2
 
     TEMPLATES = {
-        Language.en: {
+        Language.EN: {
             Template.prompt: "{identity}\n\n"
                 "Answer the question as truthfully as possible using the provided context, "
                 "and if the answer is not contained within the context below, "
@@ -166,7 +164,7 @@ class ChatBot:
                 "\"I don't know\"!"
 
         },
-        Language.it: {
+        Language.IT: {
             Template.prompt: "{identity}\n\n"
                 "Rispondi alla domanda nel modo più veritiero possibile utilizzando il contesto "
                 "fornito e, se la risposta non è contenuta nel contesto sottostante, dì "
@@ -198,12 +196,12 @@ class ChatBot:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.kb = knowledge_base
         languages = [lang.name for lang in self.TEMPLATES.keys()]
-        if self.kb.language not in languages:
+        if self.kb.language.upper() not in languages:
             raise ValueError(
                 f'Unsupported knowledge base langue "' + self.kb_language + '". '
                 'Supported languages: ' + ", ".join(languages)
             )
-        self.language = ChatBot.Language[self.kb.language]
+        self.language = Language[self.kb.language.upper()]
         self.instructions = self.TEMPLATES[self.language]
         self.tokenizer = tiktoken.get_encoding(tokenizer_encoding)
         self.embeddings_engine_name = embeddings_engine
@@ -366,10 +364,7 @@ if __name__ == '__main__':
 
     load_dotenv()
     openai.api_key = os.environ.get('OPENAI_API_KEY') or getpass.getpass('Enter OpenAI API key: ')
-
-
     kb = KnowledgeBase(args.knowledge_base)
-    ChatBot.set_openai_api_key(openai_api_key)
 
     agent = ChatBot(
         knowledge_base=kb,
