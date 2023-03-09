@@ -1,6 +1,8 @@
 numpy
 openai[embeddings]
 pandas
+python-dotenv
+requests
 streamlit
 streamlit-chat
 tiktoken

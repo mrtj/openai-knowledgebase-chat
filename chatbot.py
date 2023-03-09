@@ -357,13 +357,16 @@ class ChatBot:
 
 if __name__ == '__main__':
     import argparse, getpass
+    from dotenv import load_dotenv
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Virtual assistant chatbot")
     parser.add_argument('-kb', '--knowledge_base', type=str, required=True,
                         help="knowledge base (./data subfolder)")
     args = parser.parse_args()
 
-    openai_api_key = getpass.getpass('Enter OpenAI API key: ')
+    load_dotenv()
+    openai.api_key = os.environ.get('OPENAI_API_KEY') or getpass.getpass('Enter OpenAI API key: ')
+
 
     kb = KnowledgeBase(args.knowledge_base)
     ChatBot.set_openai_api_key(openai_api_key)
